@@ -1,10 +1,9 @@
-import { Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/context/AuthContext";
+import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Login from "@/pages/auth/Login";
 import Register from "@/pages/auth/Register";
 import Dashboard from "@/pages/dashboard/Dashboard";
 import Layout from "@/components/layout/Layout";
-import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import ChartOfAccounts from "@/pages/accounting/ChartOfAccounts";
 import CompanySetup from "@/pages/companies/CompanySetup";
 import CompanySettings from "@/pages/settings/CompanySettings";
@@ -16,31 +15,49 @@ import ReportsPage from "@/pages/reports/ReportsPage";
 import TaxesPage from "@/pages/taxes/TaxesPage";
 import TransactionsPage from "@/pages/sales/TransactionsPage";
 
-function PublicRoutes() {
+function ProtectedLayout() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-qb-green" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+  return (
+    <Layout>
+      <Outlet />
+    </Layout>
+  );
+}
+
+function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
-  );
-}
 
-function PrivateRoutes() {
-  return (
-    <Routes>
-      <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/accounting" element={<ProtectedRoute><ChartOfAccounts /></ProtectedRoute>} />
-      <Route path="/sales" element={<ProtectedRoute><ContactsPage /></ProtectedRoute>} />
-      <Route path="/sales/invoices" element={<ProtectedRoute><TransactionsPage group="sales" /></ProtectedRoute>} />
-      <Route path="/products" element={<ProtectedRoute><ProductsPage /></ProtectedRoute>} />
-      <Route path="/expenses" element={<ProtectedRoute><TransactionsPage group="purchases" /></ProtectedRoute>} />
-      <Route path="/banking" element={<ProtectedRoute><BankingPage /></ProtectedRoute>} />
-      <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
-      <Route path="/taxes" element={<ProtectedRoute><TaxesPage /></ProtectedRoute>} />
-      <Route path="/companies/new" element={<ProtectedRoute><CompanySetup /></ProtectedRoute>} />
-      <Route path="/settings" element={<ProtectedRoute><CompanySettings /></ProtectedRoute>} />
-      <Route path="/settings/currency-rates" element={<ProtectedRoute><ExchangeRatesPage /></ProtectedRoute>} />
+      <Route element={<ProtectedLayout />}>
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/accounting" element={<ChartOfAccounts />} />
+        <Route path="/sales" element={<ContactsPage />} />
+        <Route path="/sales/invoices" element={<TransactionsPage group="sales" />} />
+        <Route path="/products" element={<ProductsPage />} />
+        <Route path="/expenses" element={<TransactionsPage group="purchases" />} />
+        <Route path="/banking" element={<BankingPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/taxes" element={<TaxesPage />} />
+        <Route path="/companies/new" element={<CompanySetup />} />
+        <Route path="/settings" element={<CompanySettings />} />
+        <Route path="/settings/currency-rates" element={<ExchangeRatesPage />} />
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
@@ -49,10 +66,7 @@ export default function App() {
   return (
     <AuthProvider>
       <div className="min-h-screen bg-gray-50">
-        <PublicRoutes />
-        <Layout>
-          <PrivateRoutes />
-        </Layout>
+        <AppRoutes />
       </div>
     </AuthProvider>
   );
