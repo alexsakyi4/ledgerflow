@@ -1,0 +1,169 @@
+/// Phase 1: Multi-company, users, roles, authentication, audit log
+/// Chart of Accounts foundation starts here (completed in Phase 2)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  INVITED
+}
+
+enum CompanyMemberRole {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  BOOKKEEPER
+  READ_ONLY
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String?
+  lastName      String?
+  phone         String?
+  avatarUrl     String?
+  status        UserStatus @default(ACTIVE)
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  memberships   CompanyMember[]
+  sessions      Session[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@index([status])
+}
+
+model Company {
+  id                String   @id @default(cuid())
+  name              String
+  legalName         String?
+  legalEntityType   String?   // e.g. LLC, Corporation, Sole Proprietorship
+  fiscalYearStart   Int       @default(1) // month 1-12
+  currency          String    @default("USD") // ISO 4217
+  taxId             String?
+  taxSettings       Json?     // tax configuration
+  logoUrl           String?
+  address           Json?     // billing address
+  phone             String?
+  email             String?
+  website           String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  members           CompanyMember[]
+  chartOfAccounts   Account[]
+  auditLogs         AuditLog[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model CompanyMember {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  role      CompanyMemberRole @default(BOOKKEEPER)
+  joinedAt  DateTime @default(now())
+  isActive  Boolean  @default(true)
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@index([userId])
+}
+
+model Session {
+  id              String   @id @default(cuid())
+  userId          String
+  refreshToken    String   @unique
+  userAgent       String?
+  ipAddress       String?
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  companyId   String?
+  userId      String?
+  action      AuditAction
+  entity      String   // table name, e.g. "Invoice", "Customer"
+  entityId    String?  // id of affected record
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+/// ============================================================
+/// Phase 2 foundation: Chart of Accounts (completed in Phase 2)
+/// ============================================================
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+  COGS // Cost of Goods Sold
+}
+
+model Account {
+  id          String      @id @default(cuid())
+  companyId   String
+  parentId    String?
+  code        String      // e.g. 1000, 1100
+  name        String      // e.g. "Cash", "Accounts Receivable"
+  type        AccountType
+  description String?
+  currency    String      @default("USD")
+  openingBalance Decimal  @default(0) @db.Decimal(19, 4)
+  openingBalanceDate DateTime?
+  isActive    Boolean     @default(true)
+  isSystem    Boolean     @default(false) // cannot be deleted
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent      Account?    @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children    Account[]   @relation("AccountHierarchy")
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([type])
+  @@index([parentId])
+}

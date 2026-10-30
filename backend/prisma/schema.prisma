@@ -1,0 +1,602 @@
+/// Phase 1: Multi-company, users, roles, authentication, audit log
+/// Chart of Accounts foundation starts here (completed in Phase 2)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  INVITED
+}
+
+enum CompanyMemberRole {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  BOOKKEEPER
+  READ_ONLY
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String?
+  lastName      String?
+  phone         String?
+  avatarUrl     String?
+  status        UserStatus @default(ACTIVE)
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  memberships   CompanyMember[]
+  sessions      Session[]
+  auditLogs     AuditLog[]
+  journalEntries JournalEntry[] @relation("JournalCreator")
+  savedReports SavedReport[]
+  importBatches ImportBatch[]
+
+  @@index([email])
+  @@index([status])
+}
+
+model Company {
+  id                String   @id @default(cuid())
+  name              String
+  legalName         String?
+  legalEntityType   String?   // e.g. LLC, Corporation, Sole Proprietorship
+  fiscalYearStart   Int       @default(1) // month 1-12
+  currency          String    @default("USD") // ISO 4217
+  taxId             String?
+  taxSettings       Json?     // tax configuration
+  logoUrl           String?
+  address           Json?     // billing address
+  phone             String?
+  email             String?
+  website           String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  members           CompanyMember[]
+  chartOfAccounts   Account[]
+  auditLogs         AuditLog[]
+  contacts          Contact[]
+  products          ProductService[]
+  journalEntries    JournalEntry[]
+  documents         BusinessDocument[]
+  taxRates          TaxRate[]
+  bankAccounts      BankAccount[]
+  bankTransactions  BankTransaction[]
+  reconciliations   BankReconciliation[]
+  savedReports      SavedReport[]
+  importBatches     ImportBatch[]
+  recurringProfiles RecurringProfile[]
+  stockMovements    StockMovement[]
+  closedPeriods     ClosedPeriod[]
+  currencyRates     CurrencyRate[]
+  stripePayments    StripePayment[]
+
+  @@index([name])
+  @@index([isActive])
+}
+
+model CompanyMember {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  role      CompanyMemberRole @default(BOOKKEEPER)
+  joinedAt  DateTime @default(now())
+  isActive  Boolean  @default(true)
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@index([userId])
+}
+
+model Session {
+  id              String   @id @default(cuid())
+  userId          String
+  refreshToken    String   @unique
+  userAgent       String?
+  ipAddress       String?
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  companyId   String?
+  userId      String?
+  action      AuditAction
+  entity      String   // table name, e.g. "Invoice", "Customer"
+  entityId    String?  // id of affected record
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+/// ============================================================
+/// Phase 2 foundation: Chart of Accounts (completed in Phase 2)
+/// ============================================================
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+  COGS // Cost of Goods Sold
+}
+
+model Account {
+  id          String      @id @default(cuid())
+  companyId   String
+  parentId    String?
+  code        String      // e.g. 1000, 1100
+  name        String      // e.g. "Cash", "Accounts Receivable"
+  type        AccountType
+  description String?
+  currency    String      @default("USD")
+  openingBalance Decimal  @default(0) @db.Decimal(19, 4)
+  openingBalanceDate DateTime?
+  isActive    Boolean     @default(true)
+  isSystem    Boolean     @default(false) // cannot be deleted
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent      Account?    @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children    Account[]   @relation("AccountHierarchy")
+  journalLines JournalLine[]
+  productsIncome ProductService[] @relation("ProductIncomeAccount")
+  productsExpense ProductService[] @relation("ProductExpenseAccount")
+  bankAccount BankAccount?
+  taxRates TaxRate[] @relation("TaxLiability")
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([type])
+  @@index([parentId])
+}
+
+
+enum ContactType {
+  CUSTOMER
+  VENDOR
+  BOTH
+}
+
+enum ProductKind {
+  PRODUCT
+  SERVICE
+}
+
+enum DocumentType {
+  INVOICE
+  ESTIMATE
+  SALES_RECEIPT
+  BILL
+  EXPENSE
+  PURCHASE_ORDER
+  CREDIT_MEMO
+  VENDOR_CREDIT
+  CUSTOMER_PAYMENT
+  VENDOR_PAYMENT
+}
+
+enum DocumentStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+  APPROVED
+  RECEIVED
+  OPEN
+}
+
+enum JournalStatus {
+  POSTED
+  VOID
+}
+
+enum BankAccountType {
+  BANK
+  CREDIT_CARD
+}
+
+enum BankTransactionStatus {
+  UNMATCHED
+  MATCHED
+  EXCLUDED
+  RECONCILED
+}
+
+enum ImportEntity {
+  CUSTOMERS
+  VENDORS
+  PRODUCTS
+  CHART_OF_ACCOUNTS
+  TRANSACTIONS
+}
+
+model Contact {
+  id                 String      @id @default(cuid())
+  companyId          String
+  type               ContactType
+  displayName        String
+  companyName        String?
+  email              String?
+  phone              String?
+  billingAddress     Json?
+  shippingAddress    Json?
+  paymentTermsDays   Int         @default(0)
+  taxId              String?
+  currency           String      @default("USD")
+  openingBalance     Decimal     @default(0) @db.Decimal(19, 4)
+  isArchived         Boolean     @default(false)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  company            Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documents          BusinessDocument[]
+
+  @@index([companyId, type, isArchived])
+  @@index([companyId, displayName])
+  @@unique([companyId, email])
+}
+
+model ProductService {
+  id                String      @id @default(cuid())
+  companyId         String
+  kind              ProductKind @default(SERVICE)
+  name              String
+  sku               String?
+  description       String?
+  salePrice         Decimal     @default(0) @db.Decimal(19, 4)
+  purchaseCost      Decimal     @default(0) @db.Decimal(19, 4)
+  incomeAccountId   String
+  expenseAccountId  String?
+  taxRateId         String?
+  inventoryTracking Boolean     @default(false)
+  quantityOnHand    Decimal     @default(0) @db.Decimal(19, 4)
+  averageCost       Decimal     @default(0) @db.Decimal(19, 4)
+  reorderLevel      Decimal     @default(0) @db.Decimal(19, 4)
+  isActive          Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  incomeAccount     Account @relation("ProductIncomeAccount", fields: [incomeAccountId], references: [id], onDelete: Restrict)
+  expenseAccount    Account? @relation("ProductExpenseAccount", fields: [expenseAccountId], references: [id], onDelete: SetNull)
+  taxRate           TaxRate? @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
+  stockMovements    StockMovement[]
+
+  @@unique([companyId, sku])
+  @@index([companyId, kind, isActive])
+  @@index([companyId, name])
+}
+
+model TaxRate {
+  id          String   @id @default(cuid())
+  companyId   String
+  accountId   String?
+  name        String
+  rate        Decimal  @db.Decimal(9, 6)
+  isInclusive Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  account     Account? @relation("TaxLiability", fields: [accountId], references: [id], onDelete: SetNull)
+  products    ProductService[]
+
+  @@unique([companyId, name])
+  @@index([companyId, isActive])
+}
+
+model JournalEntry {
+  id              String        @id @default(cuid())
+  companyId       String
+  date            DateTime
+  reference       String?
+  memo            String?
+  sourceType      String?
+  sourceId        String?
+  status          JournalStatus @default(POSTED)
+  createdByUserId String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy       User        @relation("JournalCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  lines           JournalLine[]
+  document        BusinessDocument?
+
+  @@unique([companyId, sourceType, sourceId])
+  @@index([companyId, date])
+  @@index([companyId, reference])
+}
+
+model JournalLine {
+  id          String   @id @default(cuid())
+  entryId     String
+  accountId   String
+  description String?
+  debit       Decimal  @default(0) @db.Decimal(19, 4)
+  credit      Decimal  @default(0) @db.Decimal(19, 4)
+  createdAt   DateTime @default(now())
+
+  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([entryId])
+  @@index([accountId])
+}
+
+model BusinessDocument {
+  id              String         @id @default(cuid())
+  companyId       String
+  contactId       String?
+  type            DocumentType
+  number          String
+  issueDate       DateTime       @default(now())
+  dueDate         DateTime?
+  termsDays       Int            @default(0)
+  status          DocumentStatus @default(DRAFT)
+  currency        String         @default("USD")
+  exchangeRate    Decimal        @default(1) @db.Decimal(19, 8)
+  homeCurrencyTotal Decimal      @default(0) @db.Decimal(19, 4)
+  subtotal        Decimal        @default(0) @db.Decimal(19, 4)
+  taxTotal        Decimal        @default(0) @db.Decimal(19, 4)
+  discountTotal   Decimal        @default(0) @db.Decimal(19, 4)
+  total           Decimal        @default(0) @db.Decimal(19, 4)
+  amountPaid      Decimal        @default(0) @db.Decimal(19, 4)
+  reference       String?
+  memo            String?
+  lineItems       Json
+  journalEntryId  String?        @unique
+  sourceDocumentId String?
+  createdByUserId String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contact         Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  journalEntry    JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+  bankMatches     BankTransaction[]
+  stripePayments  StripePayment[]
+
+  @@unique([companyId, type, number])
+  @@unique([companyId, sourceDocumentId, type])
+  @@index([companyId, type, issueDate])
+  @@index([companyId, status, dueDate])
+  @@index([contactId])
+}
+
+model BankAccount {
+  id            String          @id @default(cuid())
+  companyId     String
+  accountId     String          @unique
+  type          BankAccountType @default(BANK)
+  name          String
+  institution   String?
+  accountMask   String?
+  openingBalance Decimal        @default(0) @db.Decimal(19, 4)
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  company       Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  account       Account           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transactions  BankTransaction[]
+  reconciliations BankReconciliation[]
+
+  @@index([companyId, isActive])
+}
+
+model BankTransaction {
+  id                  String                 @id @default(cuid())
+  companyId           String
+  bankAccountId       String
+  transactionDate     DateTime
+  description         String
+  reference           String?
+  externalId          String?
+  amount              Decimal                @db.Decimal(19, 4)
+  status              BankTransactionStatus  @default(UNMATCHED)
+  matchedDocumentId   String?
+  importedAt          DateTime               @default(now())
+  createdAt           DateTime               @default(now())
+
+  company             Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount         BankAccount   @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  matchedDocument     BusinessDocument? @relation(fields: [matchedDocumentId], references: [id], onDelete: SetNull)
+  reconciliationItems BankReconciliationItem[]
+
+  @@unique([bankAccountId, externalId])
+  @@index([companyId, transactionDate])
+  @@index([companyId, status])
+}
+
+model BankReconciliation {
+  id                 String   @id @default(cuid())
+  companyId          String
+  bankAccountId      String
+  statementEndDate   DateTime
+  statementEndBalance Decimal @db.Decimal(19, 4)
+  beginningBalance   Decimal @default(0) @db.Decimal(19, 4)
+  status             String   @default("IN_PROGRESS")
+  completedAt        DateTime?
+  createdAt          DateTime @default(now())
+
+  company            Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount        BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  items              BankReconciliationItem[]
+
+  @@index([companyId, statementEndDate])
+}
+
+model BankReconciliationItem {
+  id              String @id @default(cuid())
+  reconciliationId String
+  bankTransactionId String @unique
+  cleared         Boolean @default(false)
+
+  reconciliation  BankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([reconciliationId, cleared])
+}
+
+model SavedReport {
+  id          String   @id @default(cuid())
+  companyId   String
+  userId      String
+  name        String
+  reportType  String
+  filters     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId, name])
+  @@index([companyId, reportType])
+}
+
+model ImportBatch {
+  id           String       @id @default(cuid())
+  companyId    String
+  userId       String
+  entity       ImportEntity
+  fileName     String
+  totalRows    Int          @default(0)
+  importedRows Int          @default(0)
+  rejectedRows Int          @default(0)
+  errors       Json?
+  createdAt    DateTime     @default(now())
+
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+}
+
+model RecurringProfile {
+  id             String   @id @default(cuid())
+  companyId      String
+  contactId      String?
+  type           String   @default("INVOICE")
+  intervalMonths Int      @default(1)
+  nextRunAt      DateTime
+  isActive       Boolean  @default(true)
+  lineItems      Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, isActive, nextRunAt])
+}
+
+model StockMovement {
+  id              String   @id @default(cuid())
+  companyId       String
+  productId       String
+  quantityDelta   Decimal  @db.Decimal(19, 4)
+  unitCost        Decimal  @default(0) @db.Decimal(19, 4)
+  reason          String
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  company         Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product         ProductService @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+  @@index([productId, createdAt])
+}
+
+model ClosedPeriod {
+  id              String   @id @default(cuid())
+  companyId       String
+  startDate       DateTime
+  endDate         DateTime
+  lockedAt        DateTime @default(now())
+  lockedByUserId  String
+  note            String?
+
+  company         Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, startDate, endDate])
+  @@index([companyId, endDate])
+}
+
+model CurrencyRate {
+  id              String   @id @default(cuid())
+  companyId       String
+  baseCurrency    String
+  quoteCurrency   String
+  rateDate        DateTime
+  rate            Decimal  @db.Decimal(19, 8)
+  source           String?
+
+  company         Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, baseCurrency, quoteCurrency, rateDate])
+  @@index([companyId, rateDate])
+}
+
+model StripePayment {
+  id              String   @id @default(cuid())
+  companyId       String
+  documentId      String
+  checkoutSessionId String @unique
+  paymentIntentId String?  @unique
+  amount          Decimal  @db.Decimal(19, 4)
+  currency        String
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  company         Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  document        BusinessDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+}
+

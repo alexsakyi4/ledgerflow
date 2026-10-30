@@ -1,0 +1,10 @@
+import { Router } from "express";
+import * as controller from "../controllers/currency.controller";
+import { asyncHandler } from "../middleware/asyncHandler";
+import { authenticate, requireCompany, requireRoles } from "../middleware/auth";
+const router = Router({ mergeParams: true });
+router.use(authenticate, requireCompany);
+router.get("/", asyncHandler(controller.list));
+router.post("/", requireRoles("OWNER", "ADMIN", "ACCOUNTANT"), asyncHandler(controller.upsert));
+router.delete("/:rateId", requireRoles("OWNER", "ADMIN"), asyncHandler(controller.remove));
+export default router;

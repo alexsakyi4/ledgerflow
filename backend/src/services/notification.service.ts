@@ -1,0 +1,6 @@
+import nodemailer from "nodemailer";
+import { env } from "../config/env";
+import { AppError } from "../middleware/error";
+import { toInvoicePdf } from "./export.service";
+
+export async function emailInvoice(invoice:any,company:any,to?:string,paymentUrl?:string){const recipient=to||invoice.contact?.email;if(!recipient)throw new AppError("Customer contact has no email address",400);if(!env.SMTP_HOST)throw new AppError("Email delivery is not configured. Set SMTP_HOST and SMTP credentials.",503);const transport=nodemailer.createTransport({host:env.SMTP_HOST,port:env.SMTP_PORT,secure:env.SMTP_PORT===465,auth:env.SMTP_USER?{user:env.SMTP_USER,pass:env.SMTP_PASSWORD}:undefined});const pdf=await toInvoicePdf(invoice,company);const total=new Intl.NumberFormat("en",{style:"currency",currency:invoice.currency||company.currency||"USD"}).format(Number(invoice.total));await transport.sendMail({from:env.SMTP_FROM,to:recipient,subject:`Invoice ${invoice.number} from ${company.name}`,text:`Hello ${invoice.contact?.displayName||""},\n\nPlease find invoice ${invoice.number} attached. Total due: ${total}.${paymentUrl?`\n\nPay securely online: ${paymentUrl}`:""}\n\nThank you,\n${company.name}`,attachments:[{filename:`${invoice.number}.pdf`,content:pdf,contentType:"application/pdf"}]});return{sent:true,to:recipient};}

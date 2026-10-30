@@ -1,0 +1,24 @@
+import { BankAccountType, BankTransactionStatus } from "@prisma/client";
+import { Response } from "express";
+import { z } from "zod";
+import { BankingService } from "../services/banking.service";
+import { AppError } from "../middleware/error";
+import type { AuthRequest } from "../types";
+function ctx(req:AuthRequest){if(!req.user?.companyId||!req.user.id)throw new AppError("Company context required",401);return{companyId:req.user.companyId,userId:req.user.id};}
+function parse<S extends z.ZodTypeAny>(schema:S,value:unknown):z.infer<S>{const result=schema.safeParse(value);if(!result.success)throw new AppError(result.error.issues.map(i=>i.message).join("; "),400);return result.data;}
+const accountSchema=z.object({name:z.string().trim().min(1).max(100),accountId:z.string(),type:z.nativeEnum(BankAccountType),institution:z.string().nullable().optional(),accountMask:z.string().nullable().optional(),openingBalance:z.union([z.number().finite(),z.string()]).optional()});
+const transferSchema=z.object({fromBankAccountId:z.string(),toBankAccountId:z.string(),amount:z.union([z.number().positive(),z.string().regex(/^\d+(\.\d{1,4})?$/)]),date:z.string().datetime(),memo:z.string().max(500).optional()});
+const reconcileSchema=z.object({statementEndDate:z.string().datetime(),statementEndBalance:z.union([z.number().finite(),z.string()]),transactionIds:z.array(z.string()).default([])});
+export async function accounts(req:AuthRequest,res:Response){const{companyId}=ctx(req);res.json({success:true,data:await BankingService.listAccounts(companyId)});}
+export async function createAccount(req:AuthRequest,res:Response){const{companyId}=ctx(req);res.status(201).json({success:true,data:await BankingService.createAccount(companyId,parse(accountSchema,req.body))});}
+export async function importStatement(req:AuthRequest,res:Response){const{companyId,userId}=ctx(req);const schema=z.object({format:z.enum(["CSV","OFX"]),content:z.string().min(1),fileName:z.string().default("bank-statement")});const input=parse(schema,req.body);res.status(201).json({success:true,data:await BankingService.importStatement(companyId,userId,req.params.bankAccountId,input.fileName,input.content,input.format)});}
+export async function feed(req:AuthRequest,res:Response){const{companyId}=ctx(req);const status=req.query.status?parse(z.nativeEnum(BankTransactionStatus),req.query.status):undefined;res.json({success:true,data:await BankingService.feed(companyId,req.params.bankAccountId,status)});}
+export async function suggestions(req:AuthRequest,res:Response){const{companyId}=ctx(req);res.json({success:true,data:await BankingService.suggestions(companyId,req.params.transactionId)});}
+export async function match(req:AuthRequest,res:Response){const{companyId,userId}=ctx(req);const id=parse(z.string(),req.body.documentId);res.json({success:true,data:await BankingService.match(companyId,userId,req.params.transactionId,id)});}
+export async function reject(req:AuthRequest,res:Response){const{companyId}=ctx(req);res.json({success:true,data:await BankingService.reject(companyId,req.params.transactionId)});}
+export async function split(req:AuthRequest,res:Response){const{companyId,userId}=ctx(req);const body=parse(z.object({allocations:z.array(z.object({accountId:z.string(),amount:z.union([z.string(),z.number()]),description:z.string().optional()})).min(1)}),req.body);res.json({success:true,data:await BankingService.split(companyId,userId,req.params.transactionId,body.allocations)});}
+export async function transfer(req:AuthRequest,res:Response){const{companyId,userId}=ctx(req);const input=parse(transferSchema,req.body);res.status(201).json({success:true,data:await BankingService.transfer(companyId,userId,{...input,date:new Date(input.date)})});}
+export async function startReconciliation(req:AuthRequest,res:Response){const{companyId}=ctx(req);const input=parse(reconcileSchema,req.body);res.status(201).json({success:true,data:await BankingService.startReconciliation(companyId,req.params.bankAccountId,{...input,statementEndDate:new Date(input.statementEndDate)})});}
+export async function setCleared(req:AuthRequest,res:Response){const{companyId}=ctx(req);const input=parse(z.object({transactionIds:z.array(z.string())}),req.body);res.json({success:true,data:await BankingService.updateReconciliationCleared(companyId,req.params.reconciliationId,input.transactionIds)});}
+export async function completeReconciliation(req:AuthRequest,res:Response){const{companyId}=ctx(req);res.json({success:true,data:await BankingService.completeReconciliation(companyId,req.params.reconciliationId)});}
+export async function cancelReconciliation(req:AuthRequest,res:Response){const{companyId,userId}=ctx(req);res.json({success:true,data:await BankingService.cancelReconciliation(companyId,userId,req.params.reconciliationId)});}
